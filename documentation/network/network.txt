@@ -1,0 +1,13 @@
+src/network/
+├── __init__.py
+├── discovery.py     # Network formation and maintenance
+├── node.py         # Individual node behavior
+└── protocol.py     # Inter-node communication
+
+# __init__.py exports the main components:
+from .discovery import NetworkDiscovery
+from .node import PrintShopNode
+from .protocol import NetworkProtocol, Message, MessageType
+
+__all__ = ['NetworkDiscovery', 'PrintShopNode', 'NetworkProtocol', 
+           'Message', 'MessageType']

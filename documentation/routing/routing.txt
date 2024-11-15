@@ -1,0 +1,6 @@
+src/routing/
+├── __init__.py
+├── router.py       # Main order routing logic
+└── optimizer.py    # Scoring and optimization algorithms
+
+# All __init__.py files are blank for this week-long project

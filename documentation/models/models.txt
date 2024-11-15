@@ -1,0 +1,16 @@
+src/models/
+├── __init__.py
+├── order.py        # Order and OrderItem models
+├── shop.py         # PrintShop and related models
+└── cluster.py      # Cluster and metrics models
+
+# __init__.py exports the main components:
+from .order import Order, OrderItem, OrderStatus, OrderPriority
+from .shop import PrintShop, Location, Capability, ShopStatus, InventoryItem
+from .cluster import Cluster, ClusterMetrics
+
+__all__ = [
+    'Order', 'OrderItem', 'OrderStatus', 'OrderPriority',
+    'PrintShop', 'Location', 'Capability', 'ShopStatus', 'InventoryItem',
+    'Cluster', 'ClusterMetrics'
+]
