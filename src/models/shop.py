@@ -20,7 +20,7 @@ class ShopStatus(Enum):
     MAINTENANCE = "maintenance"
     LIMITED = "limited"
 
-@dataclass
+@dataclass(frozen=True)
 class Location:
     latitude: float
     longitude: float
@@ -71,6 +71,16 @@ class PrintShop:
     
     def __post_init__(self):
         self.current_capacity = self.daily_capacity
+
+    def __hash__(self):
+        """Make PrintShop hashable based on its ID"""
+        return hash(self.id)
+
+    def __eq__(self, other):
+        """PrintShops are equal if they have the same ID"""
+        if not isinstance(other, PrintShop):
+            return False
+        return self.id == other.id
 
     def update_status(self, new_status: ShopStatus, reason: Optional[str] = None):
         """Update shop status and log the change"""

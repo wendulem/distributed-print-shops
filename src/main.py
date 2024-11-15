@@ -3,11 +3,11 @@ import asyncio
 import logging
 from datetime import datetime
 
-from models.shop import PrintShop, Location, Capability
-from models.order import Order, OrderItem
-from network.node import PrintShopNode
-from network.discovery import NetworkDiscovery
-from routing.router import OrderRouter
+from .models.shop import PrintShop, Location, Capability
+from .models.order import Order, OrderItem
+from .network.node import PrintShopNode
+from .network.discovery import NetworkDiscovery
+from .routing.router import OrderRouter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,13 +40,15 @@ async def initialize_network() -> List[PrintShopNode]:
     ]
     
     # Create network nodes for each shop
-    nodes = [PrintShopNode(shop) for shop in shops]
+    # nodes = [PrintShopNode(shop) for shop in shops]
     
     # Initialize network discovery
-    network = NetworkDiscovery(nodes)
+    # network = NetworkDiscovery(nodes)
+    network = NetworkDiscovery(shops)
     await network.initialize()
     
-    return nodes
+    # return nodes
+    return network
 
 async def process_order(router: OrderRouter, order: Order):
     """Process a single order through the network"""
