@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 import logging
 import os
 
-from api import app
+from api import configure_app
 from src.network.discovery import NetworkDiscovery
 from src.routing.router import OrderRouter
 from src.models.shop import PrintShop, Location
@@ -83,6 +83,8 @@ async def process_order(router: OrderRouter, order: Order):
         logger.error(f"Failed to process order {order.id}: {e}")
 
 def run_app():
+    app = FastAPI(lifespan=lifespan)  # Create the FastAPI app instance
+    configure_app(app)  # Pass the app instance to api.py for configuration
     app.add_event_handler("startup", startup_event)
     app.add_event_handler("shutdown", shutdown_event)
 

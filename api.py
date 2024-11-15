@@ -25,13 +25,16 @@ router: Optional[OrderRouter] = None
 app = FastAPI()
 
 # CORS middleware setup
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+def configure_app(app: FastAPI):
+    """Configure the passed-in FastAPI app instance with routes and middleware."""
+    # CORS middleware setup
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 @app.get("/health")
 async def health_check():
