@@ -30,6 +30,11 @@ class MessageType(Enum):
     INVENTORY_QUERY = "inventory_query"
     INVENTORY_UPDATE = "inventory_update"
     INVENTORY_TRANSFER = "inventory_transfer"
+    
+    # Cluster management
+    CLUSTER_JOIN = "cluster_join"
+    CLUSTER_LEAVE = "cluster_leave"
+    CLUSTER_UPDATE = "cluster_update"
 
 @dataclass
 class Message:
@@ -80,7 +85,10 @@ class NetworkProtocol:
             MessageType.CAPACITY_QUERY: self._handle_capacity_query,
             MessageType.INVENTORY_QUERY: self._handle_inventory_query,
             MessageType.INVENTORY_UPDATE: self._handle_inventory_update,
-            MessageType.INVENTORY_TRANSFER: self._handle_inventory_transfer
+            MessageType.INVENTORY_TRANSFER: self._handle_inventory_transfer,
+            MessageType.CLUSTER_JOIN: self._handle_cluster_join,
+            MessageType.CLUSTER_LEAVE: self._handle_cluster_leave,
+            MessageType.CLUSTER_UPDATE: self._handle_cluster_update
         }
         self.pending_responses: Dict[str, asyncio.Future] = {}
 
@@ -88,11 +96,10 @@ class NetworkProtocol:
         """Send a message and wait for response if needed"""
         try:
             # In a real implementation, this would use actual network communication
-            # For now, we'll simulate direct message passing
+            # For now, we'll simulate direct message passing (placeholder)
             
             if message.receiver_id is None:
                 # Broadcast message
-                # In real implementation, would use proper broadcast mechanism
                 logger.info(f"Broadcasting message: {message.type}")
                 return None
             
@@ -116,6 +123,7 @@ class NetworkProtocol:
                 finally:
                     self.pending_responses.pop(message.message_id, None)
             
+            # Messages not expecting a response (like cluster updates, heartbeats) return None
             return None
             
         except Exception as e:
@@ -132,10 +140,13 @@ class NetworkProtocol:
             else:
                 logger.warning(f"No handler for message type: {message.type}")
                 return None
-                
         except Exception as e:
             logger.error(f"Error handling message: {e}")
             raise ProtocolError(f"Failed to handle message: {e}")
+
+    # -----------------------
+    # Handlers for Node and Order Messages
+    # -----------------------
 
     async def _handle_hello(self, message: Message) -> Message:
         """Handle node introduction"""
@@ -150,7 +161,7 @@ class NetworkProtocol:
             timestamp=datetime.now(),
             payload={
                 "status": "acknowledged",
-                "shop_data": {  # Would include own shop data
+                "shop_data": {  
                     "id": self.node_id,
                     "status": "online"
                 }
@@ -158,9 +169,7 @@ class NetworkProtocol:
         )
 
     async def _handle_heartbeat(self, message: Message) -> None:
-        """Handle heartbeat message"""
-        # Update last seen timestamp for sender
-        # In real implementation, would update node state
+        """Handle heartbeat message (no direct response needed)"""
         logger.debug(f"Received heartbeat from {message.sender_id}")
         return None
 
@@ -174,8 +183,8 @@ class NetworkProtocol:
         order_data = message.payload.get("order")
         if not order_data:
             raise ProtocolError("Order request missing order data")
-            
-        # In real implementation, would check capacity and respond accordingly
+
+        # Normally, we'd check capabilities and capacity here.
         can_fulfill = True  # Simplified check
         
         return Message(
@@ -204,7 +213,6 @@ class NetworkProtocol:
         if not order_data:
             raise ProtocolError("Forwarded order missing order data")
             
-        # Similar to order request, but with forwarding history
         can_fulfill = True  # Simplified check
         
         return Message(
@@ -222,7 +230,6 @@ class NetworkProtocol:
 
     async def _handle_capacity_update(self, message: Message) -> None:
         """Handle capacity update from another node"""
-        # Update local view of network capacity
         logger.debug(f"Capacity update from {message.sender_id}")
         return None
 
@@ -234,7 +241,7 @@ class NetworkProtocol:
             receiver_id=message.sender_id,
             timestamp=datetime.now(),
             payload={
-                "available_capacity": 100,  # Would get real capacity
+                "available_capacity": 100,  # Would get real capacity from runtime state
                 "total_capacity": 200
             }
         )
@@ -252,13 +259,12 @@ class NetworkProtocol:
             timestamp=datetime.now(),
             payload={
                 "sku": sku,
-                "quantity": 50  # Would get real inventory level
+                "quantity": 50  # Would get real inventory from runtime state
             }
         )
 
     async def _handle_inventory_update(self, message: Message) -> None:
         """Handle inventory update"""
-        # Update local view of network inventory
         logger.debug(f"Inventory update from {message.sender_id}")
         return None
 
@@ -268,7 +274,6 @@ class NetworkProtocol:
         if not transfer_data:
             raise ProtocolError("Transfer request missing transfer data")
             
-        # Would handle actual inventory transfer logic
         success = True  # Simplified response
         
         return Message(
@@ -281,3 +286,65 @@ class NetworkProtocol:
                 "success": success
             }
         )
+
+    # -----------------------
+    # Handlers for Cluster Messages
+    # -----------------------
+
+    async def _handle_cluster_join(self, message: Message) -> None:
+        """
+        Handle a request for a node to join a cluster.
+        Payload is expected to have:
+        {
+            "cluster_id": "<cluster_id>",
+            "node_id": "<node_id>"
+        }
+        """
+        cluster_id = message.payload.get("cluster_id")
+        node_id = message.payload.get("node_id")
+        if not cluster_id or not node_id:
+            raise ProtocolError("CLUSTER_JOIN message missing cluster_id or node_id")
+
+        # In a full implementation, we would:
+        # - Update cluster membership by calling cluster.add_node(...) 
+        # - Possibly respond with a confirmation message or cluster update
+        logger.info(f"Node {node_id} joining cluster {cluster_id}")
+        return None
+
+    async def _handle_cluster_leave(self, message: Message) -> None:
+        """
+        Handle a request for a node to leave a cluster.
+        Payload is expected to have:
+        {
+            "cluster_id": "<cluster_id>",
+            "node_id": "<node_id>"
+        }
+        """
+        cluster_id = message.payload.get("cluster_id")
+        node_id = message.payload.get("node_id")
+        if not cluster_id or not node_id:
+            raise ProtocolError("CLUSTER_LEAVE message missing cluster_id or node_id")
+
+        # In a full implementation:
+        # - Update cluster membership by calling cluster.remove_node(...)
+        logger.info(f"Node {node_id} leaving cluster {cluster_id}")
+        return None
+
+    async def _handle_cluster_update(self, message: Message) -> None:
+        """
+        Handle a cluster update message.
+        Payload is expected to have:
+        {
+            "cluster_id": "<cluster_id>",
+            "updates": { ... }  # arbitrary cluster updates (capacity changes, etc.)
+        }
+        """
+        cluster_id = message.payload.get("cluster_id")
+        updates = message.payload.get("updates", {})
+        if not cluster_id:
+            raise ProtocolError("CLUSTER_UPDATE message missing cluster_id")
+
+        # In a full implementation:
+        # - Apply updates to the specified cluster, e.g., adjusting capacity or rebalancing nodes.
+        logger.info(f"Applying updates to cluster {cluster_id}: {updates}")
+        return None
