@@ -64,10 +64,7 @@ class PrintShop:
     
     # Runtime state
     status: ShopStatus = field(default=ShopStatus.ONLINE)
-    current_capacity: int = field(init=False)
     inventory: Dict[str, InventoryItem] = field(default_factory=dict)
-    active_orders: List[str] = field(default_factory=list)
-    last_heartbeat: datetime = field(default_factory=datetime.now)
     
     def __post_init__(self):
         self.current_capacity = self.daily_capacity
