@@ -1,218 +1,211 @@
-from typing import List, Dict, Set, Optional
+from typing import List, Dict, Optional
 from dataclasses import dataclass
 import asyncio
 import logging
-import math
-from datetime import datetime, timedelta
+from datetime import datetime
 
-from ..models.shop import PrintShop, Location, ShopStatus
-from ..models.cluster import Cluster, ClusterMetrics
+from ..models.shop import Location
+from ..models.cluster import Cluster
 
 logger = logging.getLogger(__name__)
 
 @dataclass
 class NetworkMetrics:
-    total_nodes: int = 0
-    active_nodes: int = 0
     total_clusters: int = 0
     total_capacity: int = 0
     available_capacity: int = 0
     last_updated: datetime = datetime.now()
 
 class NetworkDiscovery:
-    def __init__(self, initial_nodes: Optional[List[PrintShop]] = None):
-        self.nodes: Dict[str, PrintShop] = {}
+    """
+    The NetworkDiscovery class now focuses solely on managing clusters.
+    It is responsible for:
+    - Tracking all known clusters in the network.
+    - Handling cluster formation requests.
+    - Finding clusters by location and returning nearby clusters.
+    - Running periodic health checks and optimization tasks at the cluster level.
+    """
+
+    def __init__(self, initial_clusters: Optional[List[Cluster]] = None):
+        # Clusters identified by a unique cluster ID
         self.clusters: Dict[str, Cluster] = {}
         self.metrics = NetworkMetrics()
-        
+
         # Configuration
-        self.cluster_radius_miles = 100.0  # Maximum radius for a cluster
-        self.health_check_interval = 60  # Seconds between health checks
-        self.node_timeout = 300  # Seconds before considering a node offline
-        
-        # Initialize with any provided nodes
-        if initial_nodes:
-            for node in initial_nodes:
-                self.add_node(node)
+        self.health_check_interval = 60   # Seconds between cluster health checks
+        self.optimization_interval = 300  # Seconds between cluster optimizations
+
+        # Initialize with any provided clusters
+        if initial_clusters:
+            for cluster in initial_clusters:
+                self.add_cluster(cluster)
 
     async def initialize(self):
-        """Start background tasks"""
+        """
+        Start background tasks for cluster-level operations.
+        This might include listening for cluster formation requests
+        (not shown here, as it depends on external integration) and
+        starting periodic tasks.
+        """
         asyncio.create_task(self._periodic_health_check())
         asyncio.create_task(self._periodic_cluster_optimization())
+        logger.info("NetworkDiscovery initialized for cluster-based management")
 
-    def add_node(self, node: PrintShop) -> bool:
-        """Add a new node to the network"""
-        try:
-            # Add to nodes dictionary
-            self.nodes[node.id] = node
-            
-            # Try to add to existing cluster
-            assigned_cluster = self._assign_to_cluster(node)
-            
-            if not assigned_cluster:
-                # Create new cluster if needed
-                cluster_id = f"cluster-{len(self.clusters) + 1}"
-                new_cluster = Cluster(
-                    id=cluster_id,
-                    center_location=node.location,
-                    shops={node}
-                )
-                self.clusters[cluster_id] = new_cluster
-                logger.info(f"Created new cluster {cluster_id} for node {node.id}")
-            
+    def add_cluster(self, cluster: Cluster):
+        """
+        Add a new cluster to the network. This would typically be called
+        when a cluster formation request is granted or when a new cluster
+        is discovered.
+        """
+        self.clusters[cluster.id] = cluster
+        self._update_metrics()
+        logger.info(f"Added cluster {cluster.id} to the network")
+
+    def remove_cluster(self, cluster_id: str):
+        """
+        Remove an existing cluster from the network. This might happen if
+        a cluster dissolves, merges with another, or is decommissioned.
+        """
+        if cluster_id in self.clusters:
+            del self.clusters[cluster_id]
             self._update_metrics()
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to add node {node.id}: {e}")
-            return False
+            logger.info(f"Removed cluster {cluster_id} from the network")
 
-    def remove_node(self, node_id: str):
-        """Remove a node from the network"""
-        if node_id in self.nodes:
-            node = self.nodes[node_id]
-            
-            # Remove from clusters
-            for cluster in self.clusters.values():
-                if node in cluster.shops:
-                    cluster.remove_shop(node)
-            
-            # Remove from nodes
-            del self.nodes[node_id]
-            self._update_metrics()
-            
-            # Clean up empty clusters
-            empty_clusters = [
-                cid for cid, cluster in self.clusters.items()
-                if not cluster.shops
-            ]
-            for cid in empty_clusters:
-                del self.clusters[cid]
+    def handle_cluster_formation_request(self, location: Location) -> Cluster:
+        """
+        Handle a request to form or find a suitable cluster for a given location.
+        1. Attempt to find an existing cluster that is near this location.
+        2. If no suitable cluster is found, create a new cluster at that location.
+        """
+        cluster = self.find_cluster_by_location(location)
+        if cluster:
+            logger.info(f"Found existing cluster {cluster.id} for location ({location.latitude}, {location.longitude})")
+            return cluster
+        else:
+            # Create a new cluster centered at this location
+            new_cluster_id = f"cluster-{len(self.clusters) + 1}"
+            new_cluster = Cluster(id=new_cluster_id, center_location=location, radius_miles=self.cluster_radius_miles)
+            self.add_cluster(new_cluster)
+            logger.info(f"Created new cluster {new_cluster.id} for location ({location.latitude}, {location.longitude})")
+            return new_cluster
 
-    def _assign_to_cluster(self, node: PrintShop) -> Optional[Cluster]:
-        """Attempt to assign a node to an existing cluster"""
+    def find_cluster_by_location(self, location: Location) -> Optional[Cluster]:
+        """
+        Find the most appropriate cluster for a given location.
+        Typically, this means the closest cluster center to the given location.
+        """
         best_cluster = None
         min_distance = float('inf')
-        
-        for cluster in self.clusters.values():
-            distance = cluster.center_location.distance_to(node.location)
-            if distance <= self.cluster_radius_miles and distance < min_distance:
-                best_cluster = cluster
-                min_distance = distance
-        
-        if best_cluster:
-            best_cluster.add_shop(node)
-            logger.info(f"Added node {node.id} to cluster {best_cluster.id}")
-            return best_cluster
-            
-        return None
 
-    def get_nearest_nodes(self, location: Location, limit: int = 5) -> List[PrintShop]:
-        """Get the nearest nodes to a location"""
-        nodes_with_distance = [
-            (node, node.location.distance_to(location))
-            for node in self.nodes.values()
-            if node.status == ShopStatus.ONLINE
-        ]
-        
-        nodes_with_distance.sort(key=lambda x: x[1])
-        return [node for node, _ in nodes_with_distance[:limit]]
-
-    def find_cluster_for_location(self, location: Location) -> Optional[Cluster]:
-        """Find the most appropriate cluster for a given location"""
-        best_cluster = None
-        min_distance = float('inf')
-        
         for cluster in self.clusters.values():
             distance = cluster.center_location.distance_to(location)
             if distance < min_distance:
                 best_cluster = cluster
                 min_distance = distance
-                
+
         return best_cluster
 
+    def get_nearby_clusters(self, location: Location, limit: int = 5) -> List[Cluster]:
+        """
+        Return a list of clusters sorted by their distance to the provided location,
+        up to a specified limit.
+        """
+        clusters_with_distance = [
+            (cluster, cluster.center_location.distance_to(location))
+            for cluster in self.clusters.values()
+        ]
+
+        clusters_with_distance.sort(key=lambda x: x[1])
+        return [cluster for cluster, _ in clusters_with_distance[:limit]]
+
     async def _periodic_health_check(self):
-        """Periodically check health of all nodes"""
+        """
+        Periodically check the health of all clusters by sending heartbeat messages.
+        Clusters (and their nodes) should respond to heartbeats.
+        If a cluster fails to respond or shows no activity, we might take action.
+        """
         while True:
             try:
-                current_time = datetime.now()
-                
-                for node in list(self.nodes.values()):
-                    # Check last heartbeat
-                    if (current_time - node.last_heartbeat).total_seconds() > self.node_timeout:
-                        if node.status != ShopStatus.OFFLINE:
-                            logger.warning(f"Node {node.id} appears to be offline")
-                            node.update_status(ShopStatus.OFFLINE, "Heartbeat timeout")
+                for cluster_id, cluster in self.clusters.items():
+                    # Send a heartbeat request to the cluster
+                    msg = self.protocol.create_message(MessageType.HEARTBEAT, {"cluster_id": cluster_id})
+                    # In a full system, this would send the message to the cluster's coordination endpoint
+                    # and we'd handle a response. Here we assume handle_cluster_message on cluster side.
+                    cluster.handle_cluster_message(msg)
+                    
+                    # After sending heartbeat, we might wait for a response or check cluster state.
+                    # For simplicity, assume cluster updates internal metrics or responds synchronously.
+                    # In a real system, cluster's nodes respond asynchronously, and we'd track responses.
                 
                 self._update_metrics()
-                
             except Exception as e:
-                logger.error(f"Error in health check: {e}")
-                
+                logger.error(f"Error in cluster health check: {e}")
+
             await asyncio.sleep(self.health_check_interval)
 
     async def _periodic_cluster_optimization(self):
-        """Periodically optimize cluster assignments"""
+        """
+        Periodically optimize cluster assignments or distribution.
+        Could:
+        - Merge underutilized clusters
+        - Split large clusters
+        - Rebalance load by adjusting cluster radius or reassigning nodes
+        """
         while True:
             try:
                 self._optimize_clusters()
             except Exception as e:
                 logger.error(f"Error in cluster optimization: {e}")
-                
-            await asyncio.sleep(300)  # Run every 5 minutes
+
+            await asyncio.sleep(self.optimization_interval)
 
     def _optimize_clusters(self):
-        """Optimize cluster assignments based on current network state"""
-        # This is a simple implementation - could be made more sophisticated
-        changed = False
-        
-        for node in self.nodes.values():
-            current_cluster = None
-            for cluster in self.clusters.values():
-                if node in cluster.shops:
-                    current_cluster = cluster
-                    break
-            
-            # Try to find a better cluster
-            better_cluster = self._assign_to_cluster(node)
-            if better_cluster and better_cluster != current_cluster:
-                if current_cluster:
-                    current_cluster.remove_shop(node)
-                changed = True
-        
-        if changed:
-            self._update_metrics()
+        """
+        I could use this to:
+        - Check if some clusters are underutilized and merge them.
+        - Split large clusters into smaller ones for better load distribution.
+        For now, it doesn't change anything. In a full system, this would integrate
+        with routing or discovery logic to adjust cluster boundaries.
+        """
+        # Placeholder: no-op optimization
+        pass
 
     def _update_metrics(self):
-        """Update network metrics"""
-        self.metrics.total_nodes = len(self.nodes)
-        self.metrics.active_nodes = sum(
-            1 for node in self.nodes.values()
-            if node.status == ShopStatus.ONLINE
-        )
+        """
+        Update network-level metrics based on the current state of all clusters.
+        The metrics here aggregate cluster capacities.
+        """
         self.metrics.total_clusters = len(self.clusters)
-        self.metrics.total_capacity = sum(
-            node.daily_capacity for node in self.nodes.values()
-        )
-        self.metrics.available_capacity = sum(
-            node.current_capacity for node in self.nodes.values()
-            if node.status == ShopStatus.ONLINE
-        )
+        total_capacity = 0
+        available_capacity = 0
+
+        # Assuming each cluster can report its current capacity and availability
+        for cluster in self.clusters.values():
+            cluster_status = cluster.get_cluster_status()
+            metrics = cluster_status.get("metrics", {})
+            total_capacity += metrics.get("total_capacity", 0)
+            available_capacity += metrics.get("available_capacity", 0)
+
+        self.metrics.total_capacity = total_capacity
+        self.metrics.available_capacity = available_capacity
         self.metrics.last_updated = datetime.now()
 
     def get_network_status(self) -> Dict:
-        """Get current network status"""
+        """
+        Get current network status, focusing on cluster-level metrics and states.
+        """
         return {
             "metrics": {
-                "total_nodes": self.metrics.total_nodes,
-                "active_nodes": self.metrics.active_nodes,
                 "total_clusters": self.metrics.total_clusters,
                 "total_capacity": self.metrics.total_capacity,
                 "available_capacity": self.metrics.available_capacity,
                 "last_updated": self.metrics.last_updated.isoformat()
             },
             "clusters": {
-                cluster.id: cluster.get_status()
+                cluster.id: cluster.get_cluster_status()
                 for cluster in self.clusters.values()
             }
         }
+
+    # Additional methods could be added here:
+    # - methods to integrate with protocol or discovery logic, etc.
