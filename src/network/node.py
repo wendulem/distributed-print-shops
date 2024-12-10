@@ -51,6 +51,15 @@ class PrintShopNode:
         asyncio.create_task(self._heartbeat_loop())
         asyncio.create_task(self._process_production_queue())
         logger.info(f"Node {self.shop.id} started")
+        
+    async def join_cluster(self, cluster_id: str):
+        """Request to join a specific cluster"""
+        await self.transport.publish(f"cluster.{cluster_id}.join", {
+            "node_id": self.shop.id,
+            "location": self.shop.location.to_dict(),
+            "capabilities": [cap.value for cap in self.shop.capabilities],
+            "capacity": self.state.current_capacity
+        })
 
     async def stop(self):
         """Stop node operations"""
