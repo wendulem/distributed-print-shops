@@ -7,7 +7,10 @@ from api import configure_app
 from src.network.discovery import NetworkDiscovery
 from src.routing.router import OrderRouter
 from src.models.shop import PrintShop, Location
+from src.models.node import PrintShopNode
+from src.models.cluster import Cluster
 from src.models.order import Order
+from src.protocol import NetworkProtocol
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,71 +23,99 @@ IS_PROD = ENV == "production"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    global network, router, discovery
+    global discovery, router
     logger.info(f"Starting application in {ENV} mode")
 
-    # Initialize network
-    discovery = await initialize_network()
-    network = discovery.nodes
-    router = OrderRouter(list(network.values()))
+    # Initialize the network discovery and related components
+    discovery, router = await initialize_system()
 
     yield
 
     # Shutdown
     logger.info("Shutting down application")
 
-async def initialize_network() -> NetworkDiscovery:
-    """Initialize the network discovery and management system"""
-    discovery = NetworkDiscovery(
-        initial_nodes=[
-            PrintShop(
-                id=os.getenv("NODE_ID"),
-                url=os.getenv("NODE_URL"),
-                location=Location(
-                    latitude=float(os.getenv("LOCATION_LAT")),
-                    longitude=float(os.getenv("LOCATION_LON"))
-                ),
-                daily_capacity=int(os.getenv("DAILY_CAPACITY")),
-                capabilities=os.getenv("CAPABILITIES", "").split(",")
-            )
-        ]
+async def initialize_system():
+    """
+    Initialize the entire system:
+    - Create static PrintShop and corresponding runtime PrintShopNode.
+    - Create a Cluster and add the node.
+    - Initialize NetworkDiscovery with clusters.
+    - Create an OrderRouter that uses cluster-based logic.
+    """
+    # Create static PrintShop model
+    shop = PrintShop(
+        id=os.getenv("NODE_ID", "default_node"),
+        name=os.getenv("SHOP_NAME", "Default Shop"),
+        location=Location(
+            latitude=float(os.getenv("LOCATION_LAT", "0.0")),
+            longitude=float(os.getenv("LOCATION_LON", "0.0"))
+        ),
+        capabilities=set(os.getenv("CAPABILITIES", "").split(",")),
+        daily_capacity=int(os.getenv("DAILY_CAPACITY", "100"))
     )
+
+    # Create runtime node (PrintShopNode)
+    # The PrintShopNode manages capacity, inventory, status, and handles incoming orders at runtime
+    node = PrintShopNode(shop=shop)
+
+    # Create a Cluster and add this node
+    cluster_id = "cluster-1"
+    cluster = Cluster(
+        id=cluster_id,
+        center_location=shop.location,
+        radius_miles=100.0
+    )
+    cluster.add_node(node)
+
+    # Initialize NetworkDiscovery with this cluster
+    discovery = NetworkDiscovery(initial_clusters=[cluster])
     await discovery.initialize()
-    return discovery
+
+    # Create OrderRouter with clusters and nodes
+    # Extract nodes from the cluster(s)
+    all_nodes = []
+    for c in discovery.clusters.values():
+        all_nodes.extend(list(c.nodes))
+
+    router = OrderRouter(nodes=all_nodes, clusters=list(discovery.clusters.values()))
+
+    return discovery, router
 
 async def startup_event():
-    """Initialize network and start background tasks"""
-    global network, router, discovery
+    """Initialize system and possibly start background tasks"""
+    global discovery, router
     logger.info(f"Starting application in {ENV} mode")
 
-    # Initialize network
-    discovery = await initialize_network()
-    network = discovery.nodes
-    router = OrderRouter(list(network.values()))
+    discovery, router = await initialize_system()
 
+    # Additional startup logic if needed
     if not IS_PROD:
-        # Local development: handle everything in one process
-        await discovery.initialize()
-        logger.info("Started background tasks for development mode")
+        logger.info("Development mode: background tasks run in the same process")
     else:
-        # Production: worker handles background tasks
-        logger.info("Production mode: background tasks handled by worker")
+        logger.info("Production mode: background tasks handled separately")
 
 async def shutdown_event():
-    """Handle shutdown tasks"""
-    pass
+    """Handle shutdown tasks if necessary"""
+    logger.info("Application shutting down")
 
-async def process_order(router: OrderRouter, order: Order):
-    """Process a single order through the network"""
+async def process_order(order: Order):
+    """Process a single order through the system using the router"""
+    global router
+    if not router:
+        logger.error("Router not initialized")
+        return
     try:
         assignment = await router.route_order(order)
-        logger.info(f"Order {order.id} assigned to nodes: {assignment.node_assignments}")
+        if assignment.success:
+            logger.info(f"Order {order.id} assigned to nodes: {assignment.node_assignments}")
+        else:
+            logger.warning(f"Order {order.id} could not be assigned: {assignment.details}")
     except Exception as e:
         logger.error(f"Failed to process order {order.id}: {e}")
 
 def run_app():
-    app = FastAPI(lifespan=lifespan)  # Create the FastAPI app instance
-    configure_app(app)  # Pass the app instance to api.py for configuration
+    app = FastAPI(lifespan=lifespan)
+    configure_app(app)  # Configure API endpoints, including cluster-level queries, etc.
     app.add_event_handler("startup", startup_event)
     app.add_event_handler("shutdown", shutdown_event)
 
