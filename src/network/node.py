@@ -6,7 +6,7 @@ from datetime import datetime
 
 from ..models.shop import PrintShop, ShopStatus, Location, Capability, InventoryItem
 from ..models.order import Order, OrderItem, OrderStatus
-from ..cluster import Cluster  # Assumed interface for cluster operations
+from ..models.cluster import Cluster  # Assumed interface for cluster operations
 from ..protocol import NetworkProtocol, MessageType  # Assumed protocol classes/enums
 from ..routing import Routing  # Assumed routing logic
 

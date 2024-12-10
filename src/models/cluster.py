@@ -5,8 +5,8 @@ import logging
 
 from .shop import PrintShop, Location, Capability
 from .order import Order, OrderItem
-from .node import PrintShopNode  # Assuming we have a node module with PrintShopNode
-from .protocol import MessageType  # Assuming protocol.py defines message types
+from ..network.node import PrintShopNode  # Assuming we have a node module with PrintShopNode
+from ..network.protocol import MessageType  # Assuming protocol.py defines message types
 
 logger = logging.getLogger(__name__)
 

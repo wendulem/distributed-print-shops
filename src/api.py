@@ -4,10 +4,10 @@ import os
 import argparse
 from typing import Optional
 
-from src.models.order import Order
-from src.routing.router import OrderRouter
-from src.network.discovery import NetworkDiscovery
-from src.models.shop import PrintShop
+from .models.order import Order
+from .routing.router import OrderRouter
+from .network.discovery import NetworkDiscovery
+from .models.shop import PrintShop
 
 # Configure logging
 import logging

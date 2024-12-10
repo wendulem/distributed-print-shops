@@ -3,14 +3,14 @@ from contextlib import asynccontextmanager
 import logging
 import os
 
-from api import configure_app
-from src.network.discovery import NetworkDiscovery
-from src.routing.router import OrderRouter
-from src.models.shop import PrintShop, Location
-from src.models.node import PrintShopNode
-from src.models.cluster import Cluster
-from src.models.order import Order
-from src.protocol import NetworkProtocol
+from .api import configure_app
+from .network.discovery import NetworkDiscovery
+from .routing.router import OrderRouter
+from .models.shop import PrintShop, Location
+from .models.node import PrintShopNode
+from .models.cluster import Cluster
+from .models.order import Order
+from .protocol import NetworkProtocol
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
