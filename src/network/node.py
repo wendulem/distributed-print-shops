@@ -6,7 +6,6 @@ from datetime import datetime
 
 from ..models.shop import PrintShop, ShopStatus, Capability, InventoryItem
 from ..models.order import Order, OrderStatus
-from ..protocol import NetworkProtocol
 from ..infrastructure.messaging.types import MessageTypes
 
 logger = logging.getLogger(__name__)
@@ -26,12 +25,12 @@ class PrintShopNode:
     def __init__(
         self,
         shop: PrintShop,
-        protocol: Optional[NetworkProtocol] = None
+        message_transport: MessageTransport
     ):
         self.shop = shop
         self.state = NodeState(current_capacity=self.shop.daily_capacity)
-        self.protocol = protocol if protocol else NetworkProtocol(node_id=self.shop.id)
-        self.heartbeat_interval = 30  # seconds
+        self.transport = message_transport
+        self.heartbeat_interval = 30
         self.max_queue_size = 100
 
     async def start(self):
@@ -85,7 +84,7 @@ class PrintShopNode:
                             "estimated_completion": datetime.now().isoformat()  # TODO: Add real estimation
                         }
                     }
-                    await self.protocol.send_message(msg)
+                    await self.transport.publish(f"{msg['type']}", msg['data'])
                     
                     logger.info(f"Node {self.shop.id} accepted order {order.id}")
                     return True
@@ -125,7 +124,7 @@ class PrintShopNode:
                         "timestamp": self.state.last_heartbeat.isoformat()
                     }
                 }
-                await self.protocol.send_message(msg)
+                await self.transport.publish(f"{msg['type']}", msg['data'])
 
             except Exception as e:
                 logger.error(f"Error in heartbeat: {e}")
@@ -149,7 +148,7 @@ class PrintShopNode:
                                 "start_time": datetime.now().isoformat()
                             }
                         }
-                        await self.protocol.send_message(msg)
+                        await self.transport.publish(f"{msg['type']}", msg['data'])
                         
                         # Simulate production
                         await self._produce_order(order)
@@ -168,7 +167,7 @@ class PrintShopNode:
                                 "completion_time": datetime.now().isoformat()
                             }
                         }
-                        await self.protocol.send_message(msg)
+                        await self.transport.publish(f"{msg['type']}", msg['data'])
                         
                         logger.info(f"Node {self.shop.id} completed order {order_id}")
 
@@ -233,7 +232,7 @@ class PrintShopNode:
                     "node_id": self.shop.id
                 }
             }
-            await self.protocol.send_message(msg)
+            await self.transport.publish(f"{msg['type']}", msg['data'])
         except Exception as e:
             logger.error(f"Error handling inventory query: {e}")
 
