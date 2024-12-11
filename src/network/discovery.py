@@ -1,11 +1,12 @@
-from typing import List, Dict, Optional
+from typing import Dict, Optional
 from dataclasses import dataclass
 import asyncio
 import logging
 from datetime import datetime
 
 from ..models.shop import Location
-from ..models.cluster import Cluster
+from ..infrastructure.messaging import MessageTransport
+from ..infrastructure.messaging.types import MessageTypes
 
 logger = logging.getLogger(__name__)
 
@@ -18,182 +19,171 @@ class NetworkMetrics:
 
 class NetworkDiscovery:
     """
-    The NetworkDiscovery class now focuses solely on managing clusters.
-    It is responsible for:
-    - Tracking all known clusters in the network.
-    - Handling cluster formation requests.
-    - Finding clusters by location and returning nearby clusters.
-    - Running periodic health checks and optimization tasks at the cluster level.
+    NetworkDiscovery coordinates cluster discovery and management through messaging.
+    It observes cluster formation/dissolution and maintains network metrics
+    without directly managing cluster objects.
     """
-
-    def __init__(self, initial_clusters: Optional[List[Cluster]] = None):
-        # Clusters identified by a unique cluster ID
-        self.clusters: Dict[str, Cluster] = {}
+    def __init__(self, message_transport: MessageTransport):
+        self.transport = message_transport
         self.metrics = NetworkMetrics()
-
+        
+        # Track cluster metadata
+        self.cluster_locations: Dict[str, Location] = {}
+        self.cluster_metrics: Dict[str, dict] = {}
+        
         # Configuration
-        self.health_check_interval = 60   # Seconds between cluster health checks
-        self.optimization_interval = 300  # Seconds between cluster optimizations
+        self.health_check_interval = 60
+        self.optimization_interval = 300
 
-        # Initialize with any provided clusters
-        if initial_clusters:
-            for cluster in initial_clusters:
-                self.add_cluster(cluster)
-
-    async def initialize(self):
-        """
-        Start background tasks for cluster-level operations.
-        This might include listening for cluster formation requests
-        (not shown here, as it depends on external integration) and
-        starting periodic tasks.
-        """
+    async def start(self):
+        """Initialize discovery service and subscribe to network events"""
+        # Subscribe to cluster lifecycle events
+        await self.transport.subscribe("cluster.announce", self._handle_cluster_announce)
+        await self.transport.subscribe("cluster.shutdown", self._handle_cluster_shutdown)
+        await self.transport.subscribe("cluster.status", self._handle_cluster_status)
+        
+        # Subscribe to node discovery events
+        await self.transport.subscribe("node.hello", self._handle_node_hello)
+        await self.transport.subscribe("node.bye", self._handle_node_bye)
+        
+        # Start background tasks
         asyncio.create_task(self._periodic_health_check())
-        asyncio.create_task(self._periodic_cluster_optimization())
-        logger.info("NetworkDiscovery initialized for cluster-based management")
+        asyncio.create_task(self._periodic_optimization())
+        
+        logger.info("NetworkDiscovery started")
 
-    def add_cluster(self, cluster: Cluster):
-        """
-        Add a new cluster to the network. This would typically be called
-        when a cluster formation request is granted or when a new cluster
-        is discovered.
-        """
-        self.clusters[cluster.id] = cluster
-        self._update_metrics()
-        logger.info(f"Added cluster {cluster.id} to the network")
+    async def handle_node_discovery(self, location: Location) -> str:
+        """Find or create suitable cluster for node location"""
+        cluster_id = await self._find_best_cluster(location)
+        
+        if not cluster_id:
+            # Request new cluster formation
+            cluster_id = f"cluster-{len(self.cluster_locations) + 1}"
+            
+            await self.transport.publish("cluster.create", {
+                "cluster_id": cluster_id,
+                "location": location.to_dict(),
+                "radius_miles": 100.0  # Default radius
+            })
+            
+            # Wait briefly for cluster announcement
+            await asyncio.sleep(1)
+        
+        return cluster_id
 
-    def remove_cluster(self, cluster_id: str):
-        """
-        Remove an existing cluster from the network. This might happen if
-        a cluster dissolves, merges with another, or is decommissioned.
-        """
-        if cluster_id in self.clusters:
-            del self.clusters[cluster_id]
-            self._update_metrics()
-            logger.info(f"Removed cluster {cluster_id} from the network")
-
-    def handle_cluster_formation_request(self, location: Location) -> Cluster:
-        """
-        Handle a request to form or find a suitable cluster for a given location.
-        1. Attempt to find an existing cluster that is near this location.
-        2. If no suitable cluster is found, create a new cluster at that location.
-        """
-        cluster = self.find_cluster_by_location(location)
-        if cluster:
-            logger.info(f"Found existing cluster {cluster.id} for location ({location.latitude}, {location.longitude})")
-            return cluster
-        else:
-            # Create a new cluster centered at this location
-            new_cluster_id = f"cluster-{len(self.clusters) + 1}"
-            new_cluster = Cluster(id=new_cluster_id, center_location=location, radius_miles=self.cluster_radius_miles)
-            self.add_cluster(new_cluster)
-            logger.info(f"Created new cluster {new_cluster.id} for location ({location.latitude}, {location.longitude})")
-            return new_cluster
-
-    def find_cluster_by_location(self, location: Location) -> Optional[Cluster]:
-        """
-        Find the most appropriate cluster for a given location.
-        Typically, this means the closest cluster center to the given location.
-        """
-        best_cluster = None
+    async def _find_best_cluster(self, location: Location) -> Optional[str]:
+        """Find most appropriate existing cluster for location"""
+        best_cluster_id = None
         min_distance = float('inf')
 
-        for cluster in self.clusters.values():
-            distance = cluster.center_location.distance_to(location)
+        for cluster_id, cluster_location in self.cluster_locations.items():
+            distance = cluster_location.distance_to(location)
             if distance < min_distance:
-                best_cluster = cluster
                 min_distance = distance
+                best_cluster_id = cluster_id
 
-        return best_cluster
+        return best_cluster_id
 
-    def get_nearby_clusters(self, location: Location, limit: int = 5) -> List[Cluster]:
-        """
-        Return a list of clusters sorted by their distance to the provided location,
-        up to a specified limit.
-        """
-        clusters_with_distance = [
-            (cluster, cluster.center_location.distance_to(location))
-            for cluster in self.clusters.values()
-        ]
+    async def _handle_cluster_announce(self, message: dict):
+        """Handle new cluster announcement"""
+        data = message.get("data", {})
+        cluster_id = data.get("cluster_id")
+        location_data = data.get("location", {})
+        
+        if cluster_id and location_data:
+            self.cluster_locations[cluster_id] = Location(**location_data)
+            logger.info(f"Registered new cluster {cluster_id}")
+            await self._update_metrics()
 
-        clusters_with_distance.sort(key=lambda x: x[1])
-        return [cluster for cluster, _ in clusters_with_distance[:limit]]
+    async def _handle_cluster_shutdown(self, message: dict):
+        """Handle cluster shutdown"""
+        cluster_id = message.get("data", {}).get("cluster_id")
+        if cluster_id in self.cluster_locations:
+            self.cluster_locations.pop(cluster_id)
+            self.cluster_metrics.pop(cluster_id, None)
+            logger.info(f"Removed cluster {cluster_id}")
+            await self._update_metrics()
+
+    async def _handle_cluster_status(self, message: dict):
+        """Handle cluster status update"""
+        data = message.get("data", {})
+        cluster_id = data.get("cluster_id")
+        metrics = data.get("metrics", {})
+        
+        if cluster_id and metrics:
+            self.cluster_metrics[cluster_id] = metrics
+            await self._update_metrics()
+
+    async def _handle_node_hello(self, message: dict):
+        """Handle new node announcement"""
+        data = message.get("data", {})
+        location_data = data.get("location", {})
+        
+        if location_data:
+            location = Location(**location_data)
+            cluster_id = await self.handle_node_discovery(location)
+            
+            if cluster_id:
+                # Inform node of its cluster assignment
+                await self.transport.publish(f"node.{data['node_id']}.cluster", {
+                    "cluster_id": cluster_id
+                })
+
+    async def _handle_node_bye(self, message: dict):
+        """Handle node departure"""
+        # We don't need to do much here as clusters handle their own membership
+        logger.info(f"Node {message.get('data', {}).get('node_id')} departing network")
 
     async def _periodic_health_check(self):
-        """
-        Periodically check the health of all clusters by sending heartbeat messages.
-        Clusters (and their nodes) should respond to heartbeats.
-        If a cluster fails to respond or shows no activity, we might take action.
-        """
+        """Periodic cluster health monitoring"""
         while True:
             try:
-                for cluster_id, cluster in self.clusters.items():
-                    # Send a heartbeat request to the cluster
-                    msg = self.protocol.create_message(MessageType.HEARTBEAT, {"cluster_id": cluster_id})
-                    # In a full system, this would send the message to the cluster's coordination endpoint
-                    # and we'd handle a response. Here we assume handle_cluster_message on cluster side.
-                    cluster.handle_cluster_message(msg)
-                    
-                    # After sending heartbeat, we might wait for a response or check cluster state.
-                    # For simplicity, assume cluster updates internal metrics or responds synchronously.
-                    # In a real system, cluster's nodes respond asynchronously, and we'd track responses.
+                # Request status updates from all clusters
+                await self.transport.publish("cluster.health.check", {
+                    "timestamp": datetime.now().isoformat()
+                })
                 
-                self._update_metrics()
+                # Wait for responses via _handle_cluster_status
+                await asyncio.sleep(self.health_check_interval)
             except Exception as e:
-                logger.error(f"Error in cluster health check: {e}")
+                logger.error(f"Error in health check: {e}")
 
-            await asyncio.sleep(self.health_check_interval)
-
-    async def _periodic_cluster_optimization(self):
-        """
-        Periodically optimize cluster assignments or distribution.
-        Could:
-        - Merge underutilized clusters
-        - Split large clusters
-        - Rebalance load by adjusting cluster radius or reassigning nodes
-        """
+    async def _periodic_optimization(self):
+        """Periodic cluster optimization"""
         while True:
             try:
-                self._optimize_clusters()
+                await self._optimize_clusters()
             except Exception as e:
-                logger.error(f"Error in cluster optimization: {e}")
-
+                logger.error(f"Error in optimization: {e}")
             await asyncio.sleep(self.optimization_interval)
 
-    def _optimize_clusters(self):
-        """
-        I could use this to:
-        - Check if some clusters are underutilized and merge them.
-        - Split large clusters into smaller ones for better load distribution.
-        For now, it doesn't change anything. In a full system, this would integrate
-        with routing or discovery logic to adjust cluster boundaries.
-        """
-        # Placeholder: no-op optimization
-        pass
+    async def _optimize_clusters(self):
+        """Optimize cluster distribution"""
+        # Example optimization: merge underutilized clusters
+        underutilized = []
+        for cluster_id, metrics in self.cluster_metrics.items():
+            if metrics.get("utilization", 1.0) < 0.3:  # Less than 30% utilized
+                underutilized.append(cluster_id)
 
-    def _update_metrics(self):
-        """
-        Update network-level metrics based on the current state of all clusters.
-        The metrics here aggregate cluster capacities.
-        """
-        self.metrics.total_clusters = len(self.clusters)
-        total_capacity = 0
-        available_capacity = 0
+        if len(underutilized) > 1:
+            await self.transport.publish("cluster.optimize", {
+                "action": "merge",
+                "clusters": underutilized
+            })
 
-        # Assuming each cluster can report its current capacity and availability
-        for cluster in self.clusters.values():
-            cluster_status = cluster.get_cluster_status()
-            metrics = cluster_status.get("metrics", {})
-            total_capacity += metrics.get("total_capacity", 0)
-            available_capacity += metrics.get("available_capacity", 0)
-
-        self.metrics.total_capacity = total_capacity
-        self.metrics.available_capacity = available_capacity
+    async def _update_metrics(self):
+        """Update network metrics from cluster data"""
+        self.metrics.total_clusters = len(self.cluster_locations)
+        self.metrics.total_capacity = sum(
+            m.get("total_capacity", 0) for m in self.cluster_metrics.values()
+        )
+        self.metrics.available_capacity = sum(
+            m.get("available_capacity", 0) for m in self.cluster_metrics.values()
+        )
         self.metrics.last_updated = datetime.now()
 
-    def get_network_status(self) -> Dict:
-        """
-        Get current network status, focusing on cluster-level metrics and states.
-        """
+    def get_network_status(self) -> dict:
+        """Get current network status"""
         return {
             "metrics": {
                 "total_clusters": self.metrics.total_clusters,
@@ -202,10 +192,10 @@ class NetworkDiscovery:
                 "last_updated": self.metrics.last_updated.isoformat()
             },
             "clusters": {
-                cluster.id: cluster.get_cluster_status()
-                for cluster in self.clusters.values()
+                cluster_id: {
+                    "location": self.cluster_locations[cluster_id].to_dict(),
+                    "metrics": self.cluster_metrics.get(cluster_id, {})
+                }
+                for cluster_id in self.cluster_locations
             }
         }
-
-    # Additional methods could be added here:
-    # - methods to integrate with protocol or discovery logic, etc.
