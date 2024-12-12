@@ -14,13 +14,15 @@ class InMemoryMessageTransport(MessageTransport):
         self._subscribers: Dict[str, Set[Callable]] = defaultdict(set)
         self._message_count = 0
         self._start_time = datetime.now()
+        # Add storage for published messages for testing
+        self.published_messages: Dict[str, list] = defaultdict(list)
 
     async def publish(self, topic: str, message: dict) -> bool:
         """Publish message to all topic subscribers"""
         self._message_count += 1
         
-        if not self._subscribers[topic]:
-            return False
+        # Store message for test verification
+        self.published_messages[topic].append(message)
 
         # Add metadata to message
         message.update({
@@ -38,7 +40,7 @@ class InMemoryMessageTransport(MessageTransport):
         
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        return True
+        return True if tasks else False
 
     async def subscribe(self, topic: str, callback: Callable[[dict], None]) -> None:
         """Subscribe callback to topic"""

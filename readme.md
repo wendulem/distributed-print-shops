@@ -1,142 +1,144 @@
-# Distributed Print Shop Network
+# Print Shop Network - Distributed Order Management System
 
-A distributed system for coordinating print-on-demand fulfillment across a network of print shops. The system optimizes order routing based on geographic location, shop capabilities, and current capacity while providing resilience through automatic failure handling and load balancing.
+## Overview
+This system implements a distributed network of print shops that collaboratively handle print orders (t-shirts, hoodies, etc.) while optimizing for location, capacity, and load balancing. It uses a message-based architecture to coordinate between nodes and manage order routing.
 
-## System Overview
+## Core Components
 
-The system consists of three main packages:
+### 1. Print Shop Node
+Individual print shop nodes that can process orders:
+```python
+# Each node maintains its state and capabilities
+node = PrintShopNode(
+    shop=PrintShop(
+        id="shop-1",
+        location=Location(40.7128, -74.0060),  # NYC
+        capabilities={Capability.TSHIRT, Capability.HOODIE},
+        daily_capacity=100
+    ),
+    message_transport=message_transport
+)
+```
 
-### Models Package
-- Core domain objects including Orders, PrintShops, and Clusters
-- Handles business logic for capacity, inventory, and status management
-- Geographic location handling and distance calculations
+### 2. Network Discovery
+Handles node discovery and cluster formation:
+```python
+# Nodes announce themselves to the network
+await transport.publish("node.hello", {
+    "node_id": "shop-1",
+    "location": {"latitude": 40.7128, "longitude": -74.0060},
+    "capabilities": ["TSHIRT", "HOODIE"],
+    "capacity": 100
+})
 
-### Network Package
-- Manages the distributed network topology
-- Handles shop discovery and cluster formation
-- Provides inter-node communication protocols
-- Monitors network health and handles failures
+# Discovery service manages cluster formation
+cluster_id = await discovery.handle_node_discovery(location)
+```
 
-### Routing Package
-- Intelligent order distribution across the network
-- Multi-strategy routing (cluster-based, direct, split)
-- Geographic and capacity-based optimization
-- Load balancing and constraint handling
+### 3. Order Router
+Routes orders to optimal nodes based on multiple criteria:
+```python
+# Order routing process
+routing_result = await router.route_order(Order(
+    id="order-123",
+    customer_location=Location(40.7128, -74.0060),
+    items=[
+        OrderItem(product_type=Capability.TSHIRT, quantity=5)
+    ]
+))
+```
+
+## Message-Based Architecture
+
+The system uses a publish/subscribe pattern for communication:
+
+```python
+# Message types
+class MessageTypes:
+    NODE_HELLO = "node.hello"
+    NODE_BYE = "node.bye"
+    ORDER_NEW = "order.new"
+    ORDER_ALLOCATED = "order.allocated"
+    INVENTORY_UPDATE = "inventory.update"
+    CLUSTER_ANNOUNCE = "cluster.announce"
+```
+
+## Clustering and Load Balancing
+
+The system automatically forms clusters of nearby print shops:
+1. Nodes announce their presence
+2. Network Discovery groups nearby nodes into clusters
+3. Orders are routed to optimal clusters based on:
+   - Geographic proximity
+   - Available capacity
+   - Required capabilities
+   - Current load
+
+## Example Flow
+
+1. **Node Joins Network**:
+```python
+# Node starts up
+await node.start()  # Publishes node.hello
+
+# Discovery service handles node
+cluster_id = await discovery.handle_node_discovery(node.location)
+await node.join_cluster(cluster_id)
+```
+
+2. **Order Processing**:
+```python
+# Submit order
+await transport.publish("order.new", {
+    "order": {
+        "id": "order-123",
+        "items": [{"type": "TSHIRT", "quantity": 5}],
+        "location": {"latitude": 40.7128, "longitude": -74.0060}
+    }
+})
+
+# Router finds optimal node(s)
+result = await router.route_order(order)
+
+# Node processes order
+if result.success:
+    for node_id, items in result.node_assignments.items():
+        await nodes[node_id].handle_order(order, items)
+```
 
 ## Key Features
 
-- Geographic clustering of print shops for efficient delivery
-- Automatic node discovery and cluster formation
-- Intelligent order routing and load balancing
-- Capacity and inventory management
-- Failure detection and recovery
-- Split order handling for large orders
-- Real-time network health monitoring
+1. **Dynamic Node Discovery**
+   - Nodes can join/leave network dynamically
+   - Automatic cluster formation based on geography
 
-## Project Structure
+2. **Smart Order Routing**
+   - Geographic optimization
+   - Load balancing across nodes
+   - Support for order splitting across nodes
+   - Fallback strategies for high-load scenarios
 
-```
-src/
-├── models/           # Core domain models
-│   ├── shop.py      # Print shop and location models
-│   ├── order.py     # Order and item models
-│   └── cluster.py   # Cluster and metrics models
-├── network/         # Network management
-│   ├── discovery.py # Network formation and maintenance
-│   ├── node.py     # Individual node behavior
-│   └── protocol.py  # Inter-node communication
-└── routing/         # Order routing
-    ├── router.py    # Routing logic and strategies
-    └── optimizer.py # Shop scoring and optimization
+3. **Health Monitoring**
+   - Periodic health checks
+   - Automatic node status updates
+   - Cluster optimization
 
-tests/
-├── integration/
-│   ├── test_cluster.py  # Cluster coordination tests
-│   └── test_e2e.py     # End-to-end system tests
-├── test_models.py      # Core model tests
-├── test_discovery.py   # Network formation tests
-└── test_routing.py     # Routing logic tests
-```
+## Running the System
 
-## Testing
-
-The test suite provides comprehensive coverage:
-
-- Unit tests for all core components
-- Integration tests for cluster coordination
-- End-to-end tests for complete workflows
-- Failure scenario testing
-- Load and performance testing
-
-Run tests using pytest:
 ```bash
-pytest tests/          # Run all tests
-pytest tests/test_models.py  # Run specific test file
-pytest -k "test_routing"     # Run tests matching pattern
+# Start a node
+export NODE_ID=shop-1
+export LOCATION_LAT=40.7128
+export LOCATION_LON=-74.0060
+export CAPABILITIES=TSHIRT,HOODIE
+export DAILY_CAPACITY=100
+python -m src.main
 ```
 
-## Setup and Deployment
+## Distribution Patterns Used
 
-1. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-2. Configure environment:
-```bash
-cp .env.example .env
-# Edit .env with your configuration
-```
-
-3. Run the system:
-```bash
-# Start API
-python api.py
-
-# Start worker (in separate terminal)
-python worker.py
-```
-
-## Deployment on Heroku
-
-The system can be deployed on Heroku with multiple dynos:
-
-1. Create Heroku apps:
-```bash
-heroku create printnode-sf  # San Francisco node
-heroku create printnode-la  # Los Angeles node
-```
-
-2. Configure each node:
-```bash
-heroku config:set NODE_ID=sf-1 LOCATION_LAT=37.7749 LOCATION_LON=-122.4194 -a printnode-sf
-```
-
-3. Add Redis for node coordination:
-```bash
-heroku addons:create heroku-redis:hobby-dev
-```
-
-4. Deploy:
-```bash
-git push heroku-sf main
-```
-
-## Architecture Decisions
-
-- Geographic clustering for efficient delivery
-- Semi-autonomous nodes for resilience
-- Multiple routing strategies for flexibility
-- Protocol-based node communication
-- Health monitoring and automatic recovery
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Submit a pull request
-
-## License
-
-MIT License - see LICENSE file for details
+1. **Publish/Subscribe**: Message-based communication between components
+2. **Service Discovery**: Dynamic node discovery and cluster formation
+3. **Load Balancing**: Smart order routing across nodes
+4. **State Management**: Distributed state tracking across nodes
+5. **Health Monitoring**: System-wide health checks and optimization

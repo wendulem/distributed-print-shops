@@ -33,6 +33,13 @@ class PrintShopNode:
         self.transport = message_transport
         self.heartbeat_interval = 30
         self.max_queue_size = 100
+        
+    async def __aenter__(self):
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.stop()
 
     async def start(self):
         """Start node operations"""
@@ -252,8 +259,6 @@ class PrintShopNode:
             self.update_inventory(sku, quantity)
         except Exception as e:
             logger.error(f"Error handling inventory update: {e}")
-
-    # [Core methods like update_status, has_capacity, reserve_capacity, etc. remain unchanged]
 
     # -----------------------
     # Runtime Methods Moved from PrintShop
