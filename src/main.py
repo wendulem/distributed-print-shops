@@ -6,7 +6,8 @@ import os
 from .api import configure_app
 from .network.discovery import NetworkDiscovery
 from .routing.router import OrderRouter
-from .models.shop import PrintShop, Location
+from .models.shop import PrintShop
+from .models.location import Location
 from .network.node import PrintShopNode
 from .models.order import Order
 from .infrastructure.messaging.memory import InMemoryMessageTransport

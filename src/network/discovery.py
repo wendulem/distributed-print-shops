@@ -4,8 +4,8 @@ import asyncio
 import logging
 from datetime import datetime
 
-from ..models.shop import Location
-from ..infrastructure.messaging import MessageTransport
+from ..models.location import Location
+from ..infrastructure.messaging.interface import MessageTransport
 from ..infrastructure.messaging.types import MessageTypes
 
 logger = logging.getLogger(__name__)

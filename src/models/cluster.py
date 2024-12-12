@@ -3,7 +3,8 @@ from typing import Set, Dict, List, Optional
 from datetime import datetime
 import logging
 
-from .shop import PrintShop, Location, Capability
+from .shop import PrintShop, Capability
+from .location import Location
 from .order import Order, OrderItem
 from ..infrastructure.messaging import MessageTransport
 from ..infrastructure.messaging.types import MessageTypes

@@ -3,7 +3,7 @@ from typing import List, Optional
 from datetime import datetime
 from enum import Enum
 from uuid import uuid4
-from pydantic import BaseModel, Field
+from .location import Location
 
 class OrderStatus(Enum):
     CREATED = "created"
@@ -18,15 +18,11 @@ class OrderPriority(Enum):
     HIGH = "high"
     RUSH = "rush"
 
-@dataclass
-class Location:
-    latitude: float
-    longitude: float
-
-class OrderItem(BaseModel):
+@dataclass(frozen=True)
+class OrderItem:
     """Individual item within an order"""
     product_type: str
-    quantity: int = Field(gt=0)  # Ensure quantity is positive
+    quantity: int = field(compare=True)  # Ensure quantity is positive
     design_url: str
     sku: Optional[str] = None
     notes: Optional[str] = None
@@ -34,20 +30,18 @@ class OrderItem(BaseModel):
     # Production details
     assigned_shop_id: Optional[str] = None
     production_status: str = "pending"
-    
-    class Config:
-        frozen = True  # Make the model immutable
 
-class Order(BaseModel):
+@dataclass
+class Order:
     """Represents a customer order for printed products"""
-    id: str = Field(default_factory=lambda: str(uuid4()))
     customer_location: Location
     items: List[OrderItem]
+    id: str = field(default_factory=lambda: str(uuid4()))
     
     # Order metadata
-    created_at: datetime = Field(default_factory=datetime.now)
-    status: OrderStatus = Field(default=OrderStatus.CREATED)
-    priority: OrderPriority = Field(default=OrderPriority.NORMAL)
+    created_at: datetime = field(default_factory=datetime.now)
+    status: OrderStatus = field(default=OrderStatus.CREATED)
+    priority: OrderPriority = field(default=OrderPriority.NORMAL)
     
     # Delivery requirements
     required_by: Optional[datetime] = None
@@ -55,9 +49,9 @@ class Order(BaseModel):
     
     # Tracking
     assigned_cluster_id: Optional[str] = None
-    shop_assignments: dict = Field(default_factory=dict)  # shop_id -> [item_ids]
-    latest_update: datetime = Field(default_factory=datetime.now)
-    status_history: List[dict] = Field(default_factory=list)
+    shop_assignments: dict = field(default_factory=dict)  # shop_id -> [item_ids]
+    latest_update: datetime = field(default_factory=datetime.now)
+    status_history: List[dict] = field(default_factory=list)
     
     def add_status_update(self, new_status: OrderStatus, message: Optional[str] = None):
         """Record a status change in the order's history"""
@@ -121,13 +115,4 @@ class Order(BaseModel):
             "latest_update": self.latest_update.isoformat(),
             "estimated_production_time": self.estimated_production_time(),
             "is_fully_assigned": self.is_fully_assigned()
-        }
-    
-    class Config:
-        """Pydantic configuration"""
-        arbitrary_types_allowed = True
-        json_encoders = {
-            datetime: lambda v: v.isoformat(),
-            OrderStatus: lambda v: v.value,
-            OrderPriority: lambda v: v.value
         }

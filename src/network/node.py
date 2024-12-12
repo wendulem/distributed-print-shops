@@ -7,6 +7,7 @@ from datetime import datetime
 from ..models.shop import PrintShop, ShopStatus, Capability, InventoryItem
 from ..models.order import Order, OrderStatus
 from ..infrastructure.messaging.types import MessageTypes
+from ..infrastructure.messaging.interface import MessageTransport
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ class PrintShopNode:
                 "capacity": self.shop.daily_capacity
             }
         }
-        await self.protocol.send_message(hello_msg)
+        await self.transport.publish("node.hello", hello_msg["data"])
 
         # Start operational loops
         asyncio.create_task(self._heartbeat_loop())
@@ -63,11 +64,9 @@ class PrintShopNode:
 
     async def stop(self):
         """Stop node operations"""
-        bye_msg = {
-            "type": MessageTypes.NODE_BYE,
-            "data": {"shop_id": self.shop.id}
-        }
-        await self.protocol.send_message(bye_msg)
+        await self.transport.publish("node.bye", {
+            "shop_id": self.shop.id
+        })
         self.state.status = ShopStatus.OFFLINE
         logger.info(f"Node {self.shop.id} stopped")
 

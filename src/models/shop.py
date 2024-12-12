@@ -3,6 +3,7 @@ from typing import Set, Dict, List, Optional
 from enum import Enum
 from datetime import datetime
 import math
+from .location import Location
 
 class Capability(Enum):
     TSHIRT = "t-shirt"
@@ -19,26 +20,6 @@ class ShopStatus(Enum):
     OFFLINE = "offline"
     MAINTENANCE = "maintenance"
     LIMITED = "limited"
-
-@dataclass(frozen=True)
-class Location:
-    latitude: float
-    longitude: float
-    
-    def distance_to(self, other: 'Location') -> float:
-        """Calculate distance in miles using Haversine formula"""
-        R = 3959.87433  # Earth's radius in miles
-
-        lat1, lon1 = math.radians(self.latitude), math.radians(self.longitude)
-        lat2, lon2 = math.radians(other.latitude), math.radians(other.longitude)
-        
-        dlat = lat2 - lat1
-        dlon = lon2 - lon1
-        
-        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
-        c = 2 * math.asin(math.sqrt(a))
-        
-        return R * c
 
 @dataclass
 class InventoryItem:
